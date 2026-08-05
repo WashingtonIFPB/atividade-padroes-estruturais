@@ -3,57 +3,50 @@ package br.edu.ifpb.padroes.estruturais.relatorios;
 import java.util.HashMap;
 import java.util.Map;
 
+/**
+ * Classe cliente do sistema de relatórios.
+ *
+ * Após a refatoração, esta classe NÃO contém mais nenhuma regra de negócio:
+ * ela apenas escolhe o gerador base (PDF/Excel), decide QUAIS decorators
+ * empilhar (cache? log?) e envolve tudo com o proxy de controle de acesso.
+ * Toda a lógica de "o que" cada funcionalidade faz está isolada nas classes
+ * de PROXY e DECORATOR correspondentes.
+ *
+ * Isso resolve o problema original: adicionar uma nova combinação de
+ * cache/log não exige nenhum novo parâmetro nem "if" aqui — só depende de
+ * quais decorators já existem, e eles podem ser combinados livremente.
+ */
 public class SistemaRelatorios {
 
-    private GeradorRelatorio geradorPDF = new GeradorRelatorioPDF();
-    private GeradorRelatorio geradorExcel = new GeradorRelatorioExcel();
-
-    private Map<String, String> cache = new HashMap<>();
+    // Cache compartilhado entre chamadas, assim como no código original
+    // (era um campo de instância de SistemaRelatorios).
+    private final Map<String, String> cache = new HashMap<>();
 
     public String gerarRelatorio(Usuario usuario, String dadosBrutos, String tipo,
                                   boolean usarCache, boolean gerarLog) {
 
-        // ---- Controle de acesso misturado com a regra de negócio ----
-        if (!usuario.isAutenticado()) {
-            System.out.println("[ERRO] Usuario nao autenticado tentou gerar relatorio.");
-            return null;
-        }
-        if (!usuario.getPapel().equals("ADMIN") && !usuario.getPapel().equals("OPERADOR")) {
-            System.out.println("[ERRO] Usuario sem permissao para gerar relatorios: " + usuario.getNome());
-            return null;
-        }
-
-        String chaveCache = tipo + ":" + dadosBrutos;
-
-        // ---- Cache espalhado dentro do método de negócio ----
-        if (usarCache && cache.containsKey(chaveCache)) {
-            if (gerarLog) {
-                System.out.println("[LOG] Retornando resultado do cache para " + usuario.getNome());
-            }
-            return cache.get(chaveCache);
-        }
+        GeradorRelatorio gerador = criarGeradorBase(tipo);
 
         if (gerarLog) {
-            System.out.println("[LOG] Usuario " + usuario.getNome() + " solicitou relatorio tipo " + tipo);
-        }
-
-        String resultado;
-        if (tipo.equals("PDF")) {
-            resultado = geradorPDF.gerar(dadosBrutos);
-        } else if (tipo.equals("EXCEL")) {
-            resultado = geradorExcel.gerar(dadosBrutos);
-        } else {
-            throw new IllegalArgumentException("Tipo de relatorio desconhecido: " + tipo);
+            gerador = new LogGeradorRelatorioDecorator(gerador, usuario.getNome(), tipo);
         }
 
         if (usarCache) {
-            cache.put(chaveCache, resultado);
+            gerador = new CacheGeradorRelatorioDecorator(gerador, cache, tipo, usuario.getNome());
         }
 
-        if (gerarLog) {
-            System.out.println("[LOG] Relatorio gerado com sucesso para " + usuario.getNome());
-        }
+        GeradorRelatorio geradorProtegido = new GeradorRelatorioAcessoProxy(gerador, usuario);
 
-        return resultado;
+        return geradorProtegido.gerar(dadosBrutos);
+    }
+
+    private GeradorRelatorio criarGeradorBase(String tipo) {
+        if (tipo.equals("PDF")) {
+            return new GeradorRelatorioPDF();
+        } else if (tipo.equals("EXCEL")) {
+            return new GeradorRelatorioExcel();
+        } else {
+            throw new IllegalArgumentException("Tipo de relatorio desconhecido: " + tipo);
+        }
     }
 }
